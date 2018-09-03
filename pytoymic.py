@@ -8,54 +8,42 @@ import os
 
 NA = "__NA__"
 Datom = namedtuple("Datom", "e a v t asserted retracted")
-CONN = "pytoymic.pickle"
+Db = namedtuple("Db", "datoms t")
 
 
 def entity():
     return "ENTITY." + str(uuid4())[:8]
 
 
-def touch(conn):
-    if not os.path.exists(conn):
-        with open(conn, 'wb') as f:
-            pickle.dump(Db([], 0), f)
-
-
 @contextmanager
 def transact(conn):
     lock_file = posixfile.open(conn + ".lock", 'w')
     lock_file.lock('w|')
-    with read(conn) as db:
-        pass
+    db_old = _read(conn)
+    db_new = Db(db_old.datoms, db_old.t + 1)
     try:
-        db.t += 1
-        yield db
+        yield db_new
     finally:
         with open(conn, 'wb') as f:
-            pickle.dump(db, f)
+            pickle.dump(db_new, f)
         lock_file.lock('u')
         lock_file.close()
 
 
-@contextmanager
-def read(conn):
+def _read(conn):
     if not os.path.exists(conn):
-        yield Db([], 0)
+        return Db([], 0)
     else:
         with open(conn, 'rw') as f:
-            yield pickle.load(f)
+            return pickle.load(f)
 
 
-class Db(object):
-    def __init__(self, datoms, t):
-        self.datoms = datoms
-        self.t = t
-
-    def __repr__(self):
-        return "DB @ {}".format(self.t)
+@contextmanager
+def read(conn):
+    yield _read(conn)
 
 
-def _assert(db, e, a, v):
+def add(db, e, a, v):
     datom = Datom(e, a, v, db.t, True, False)
     db.datoms.append(datom)
 
@@ -83,6 +71,8 @@ def query(db, e=None, a=None, v=None, as_of=None):
             continue
         elif v is not None and v != datom.v:
             continue
+        elif datom.retracted is True:
+            continue
         else:
             e_a_pair = datom.e + datom.a
             if e_a_pair in e_a_pairs:
@@ -107,30 +97,32 @@ def pquery(db, *args, **kwargs):
 
 
 if __name__ == "__main__":
+    CONN = "pytoymic.pickle"
+    os.system("rm " + CONN)
     with transact(CONN) as db:
-        user_entity = _assert(db, entity(), "user.id", NA)
-        _assert(db, user_entity, "user.name", "Hans Jensen")
-        _assert(db, user_entity, "user.email", "foo@gmail.com")
-        user_entity2 = _assert(db, entity(), "user.id", NA)
-        _assert(db, user_entity2, "user.name", "Jens Andersen")
-        _assert(db, user_entity2, "user.email", "bar@gmail.com")
+        user_entity = add(db, entity(), "user.id", NA)
+        add(db, user_entity, "user.name", "Hans Jensen")
+        add(db, user_entity, "user.email", "foo@gmail.com")
+        user_entity2 = add(db, entity(), "user.id", NA)
+        add(db, user_entity2, "user.name", "Jens Andersen")
+        add(db, user_entity2, "user.email", "bar@gmail.com")
 
     with transact(CONN) as db:
         retract(db, user_entity, "user.email")
 
     with transact(CONN) as db:
-        _assert(db, user_entity, "user.email", "bar@gmail.com")
+        add(db, user_entity, "user.email", "bar@gmail.com")
 
     with transact(CONN) as db:
-        message_entity = _assert(db, entity(), "message.id", NA)
-        _assert(db, message_entity, "message.message", "Hej med dig")
-        _assert(db, message_entity, "message.user_id", user_entity)
-        message_entity = _assert(db, entity(), "message.id", NA)
-        _assert(db, message_entity, "message.message", "Fedt mand")
-        _assert(db, message_entity, "message.user_id", user_entity)
-        message_entity2 = _assert(db, entity(), "message.id", NA)
-        _assert(db, message_entity2, "message.message", "Yeah")
-        _assert(db, message_entity2, "message.user_id", user_entity2)
+        message_entity = add(db, entity(), "message.id", NA)
+        add(db, message_entity, "message.message", "Hej med dig")
+        add(db, message_entity, "message.user_id", user_entity)
+        message_entity = add(db, entity(), "message.id", NA)
+        add(db, message_entity, "message.message", "Fedt mand")
+        add(db, message_entity, "message.user_id", user_entity)
+        message_entity2 = add(db, entity(), "message.id", NA)
+        add(db, message_entity2, "message.message", "Yeah")
+        add(db, message_entity2, "message.user_id", user_entity2)
 
         print ":...................."
         pprint(db.datoms)
